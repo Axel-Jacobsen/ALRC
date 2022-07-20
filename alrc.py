@@ -1,3 +1,4 @@
+import math
 import torch
 
 
@@ -22,22 +23,23 @@ class AdaptiveLRClipping:
         self._mu2 = mu2
         self._prev_loss: Optional[float] = None
 
-    def clip(self, loss: torch.Tensor) -> torch.Tensor:
+    def clip(self, loss: torch.Tensor, step=None) -> torch.Tensor:
         # TODO: add support for neg losses - reqs careful mgmt of div by 0
         assert loss > 0, "ALRC currently only supports positive losses"
-        sigma = torch.sqrt(self._mu2 - self._mu1**2)
-        max_loss = self._mu1 + self._n * sigma + 1e-8
-        if loss > max_loss:
-            # do we do this rigamarol to add max_loss to the graph?
-            with torch.no_grad():
-                ldiv = max_loss / loss
-            return ldiv * loss
-        self._prev_loss = loss.item()
-        return loss
 
-    def update(self):
-        assert (
-            self._prev_loss is not None
-        ), "AdaptiveLRClipping.clip must be called before AdaptiveLRClipping.update"
-        self._mu1 = self._beta1 * self._mu1 + (1 - self._beta1) * self._prev_loss
-        self._mu2 = self._beta2 * self._mu2 + (1 - self._beta2) * self._prev_loss**2
+        if self._prev_loss is not None:
+            self._mu1 = self._beta1 * self._mu1 + (1 - self._beta1) * self._prev_loss
+            self._mu2 = self._beta2 * self._mu2 + (1 - self._beta2) * self._prev_loss**2
+
+        sigma = math.sqrt(self._mu2 - self._mu1**2)
+        max_loss = self._mu1 + self._n * sigma
+        if loss > max_loss:
+            self._clip_instance = (step, loss, max_loss)
+            # we do this rigamarole to add max_loss to the graph?
+            ldiv = max_loss / loss.item()
+            dyn_loss =  ldiv * loss
+        else:
+            dyn_loss = loss
+
+        self._prev_loss = dyn_loss.item()
+        return dyn_loss
